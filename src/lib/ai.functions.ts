@@ -66,15 +66,29 @@ export const planTasks = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const gateway = getGateway();
-    const { object } = await generateObject({
+    const resultSchema = z.object({ tasks: z.array(TaskSchema).min(1).max(40) });
+    const { text } = await generateText({
       model: gateway(MODEL),
-      schema: z.object({ tasks: z.array(TaskSchema).min(1).max(40) }),
       system:
-        "You are a productivity coach. Break work into clear, actionable, non-overlapping tasks ordered logically. Be concise. Never duplicate tasks.",
-      prompt: `Build a prioritized ${data.scope.toLowerCase()} plan from the input below. Return a structured list of tasks suitable for a table.\n\nRules:\n- Each task must be atomic and actionable\n- No duplicates or overlap\n- Order tasks logically (dependencies/urgency first)\n- For Daily: dueDate is a time block today (e.g. "9:00–10:30")\n- For Weekly: dueDate is a weekday or ISO date\n- Default status is "Not Started" unless input implies otherwise\n- Keep description to one sentence; keep notes to <= 12 words\n\nInput:\n${data.tasks}`,
+        "You are a productivity coach. Break work into clear, actionable, non-overlapping tasks ordered logically. Be concise. Never duplicate tasks. You ALWAYS respond with valid JSON only — no prose, no markdown fences.",
+      prompt: `Build a prioritized ${data.scope.toLowerCase()} plan from the input below.\n\nReturn ONLY a JSON object with this exact shape (no markdown, no commentary):\n{\n  "tasks": [\n    {\n      "task": string,                 // short action-oriented title\n      "description": string,          // one concise sentence\n      "priority": "High" | "Medium" | "Low",\n      "status": "Not Started" | "In Progress" | "Pending Review" | "Completed",\n      "dueDate": string,              // e.g. "9:00–10:30" for Daily, weekday or ISO date for Weekly\n      "notes": string                 // <= 12 words\n    }\n  ]\n}\n\nRules:\n- Each task must be atomic and actionable\n- No duplicates or overlap\n- Order tasks logically (dependencies/urgency first)\n- Default status is "Not Started" unless input implies otherwise\n\nInput:\n${data.tasks}`,
     });
-    return object;
+    return resultSchema.parse(extractJson(text));
   });
+
+function extractJson(raw: string): unknown {
+  let s = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const start = s.search(/[\{\[]/);
+  const end = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (start === -1 || end === -1) throw new Error("AI did not return JSON");
+  s = s.slice(start, end + 1);
+  try {
+    return JSON.parse(s);
+  } catch {
+    s = s.replace(/,\s*}/g, "}").replace(/,\s*]/g, "]").replace(/[\x00-\x1F\x7F]/g, "");
+    return JSON.parse(s);
+  }
+}
 
 export const researchTopic = createServerFn({ method: "POST" })
   .inputValidator(
