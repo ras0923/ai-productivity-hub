@@ -46,6 +46,17 @@ export const summarizeNotes = createServerFn({ method: "POST" })
     ),
   );
 
+const TaskSchema = z.object({
+  task: z.string().describe("Short, action-oriented task title (max ~8 words)"),
+  description: z.string().describe("One concise sentence explaining the task"),
+  priority: z.enum(["High", "Medium", "Low"]),
+  status: z.enum(["Not Started", "In Progress", "Pending Review", "Completed"]),
+  dueDate: z.string().describe("Human-friendly due date or time block (e.g. 'Mon 9:00–10:30' or '2026-06-18')"),
+  notes: z.string().describe("Short helpful note, dependency, or tip"),
+});
+
+export type PlannedTask = z.infer<typeof TaskSchema>;
+
 export const planTasks = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
@@ -53,12 +64,17 @@ export const planTasks = createServerFn({ method: "POST" })
       scope: z.enum(["Daily", "Weekly"]),
     }),
   )
-  .handler(async ({ data }) =>
-    run(
-      "You are a productivity coach who creates realistic, prioritized work schedules.",
-      `Create a prioritized ${data.scope.toLowerCase()} schedule from these tasks.\n\nTasks:\n${data.tasks}\n\nRequirements:\n- Prioritize urgent/important tasks first\n- Suggest realistic time blocks (with start–end times for Daily, or day-by-day blocks for Weekly)\n- Include short breaks\n- End with 2–3 productivity tips\n\nFormat using markdown.`,
-    ),
-  );
+  .handler(async ({ data }) => {
+    const gateway = getGateway();
+    const { object } = await generateObject({
+      model: gateway(MODEL),
+      schema: z.object({ tasks: z.array(TaskSchema).min(1).max(40) }),
+      system:
+        "You are a productivity coach. Break work into clear, actionable, non-overlapping tasks ordered logically. Be concise. Never duplicate tasks.",
+      prompt: `Build a prioritized ${data.scope.toLowerCase()} plan from the input below. Return a structured list of tasks suitable for a table.\n\nRules:\n- Each task must be atomic and actionable\n- No duplicates or overlap\n- Order tasks logically (dependencies/urgency first)\n- For Daily: dueDate is a time block today (e.g. "9:00–10:30")\n- For Weekly: dueDate is a weekday or ISO date\n- Default status is "Not Started" unless input implies otherwise\n- Keep description to one sentence; keep notes to <= 12 words\n\nInput:\n${data.tasks}`,
+    });
+    return object;
+  });
 
 export const researchTopic = createServerFn({ method: "POST" })
   .inputValidator(
