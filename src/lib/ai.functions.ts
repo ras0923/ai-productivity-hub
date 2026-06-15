@@ -22,6 +22,50 @@ async function run(system: string, prompt: string) {
   return { text };
 }
 
+export const transcribeAudio = createServerFn({ method: "POST" })
+  .inputValidator(
+    z.object({
+      audioBase64: z.string().min(1).max(20_000_000),
+      format: z.enum(["webm", "mp4", "m4a", "wav", "mp3", "ogg"]),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("Missing LOVABLE_API_KEY");
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Lovable-API-Key": key,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Transcribe this audio verbatim. Output only the transcript text — no commentary, no timestamps, no speaker labels unless clearly distinct.",
+              },
+              {
+                type: "input_audio",
+                input_audio: { data: data.audioBase64, format: data.format },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Transcription failed (${res.status}): ${err.slice(0, 500)}`);
+    }
+    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const text = json.choices?.[0]?.message?.content?.trim() ?? "";
+    return { text };
+  });
+
 export const generateEmail = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
